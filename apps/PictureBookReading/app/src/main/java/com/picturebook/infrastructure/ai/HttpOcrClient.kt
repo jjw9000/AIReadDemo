@@ -3,12 +3,15 @@ package com.picturebook.infrastructure.ai
 import android.graphics.Bitmap
 import android.util.Log
 import com.google.gson.Gson
+import com.picturebook.config.AppConfig
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.ByteArrayOutputStream
 import java.util.Base64
 import kotlin.coroutines.resume
 
-class HttpOcrClient(private val apiBaseUrl: String = "http://192.168.3.18:5017") {
+class HttpOcrClient(
+    private val apiBaseUrl: String = AppConfig.OCR_API_URL
+) {
 
     private val gson = Gson()
 
@@ -28,8 +31,8 @@ class HttpOcrClient(private val apiBaseUrl: String = "http://192.168.3.18:5017")
             connection.requestMethod = "POST"
             connection.setRequestProperty("Content-Type", "application/json")
             connection.doOutput = true
-            connection.connectTimeout = 30000
-            connection.readTimeout = 120000
+            connection.connectTimeout = AppConfig.HTTP_CONNECT_TIMEOUT_MS
+            connection.readTimeout = AppConfig.OCR_HTTP_READ_TIMEOUT_MS
 
             connection.outputStream.use { os ->
                 os.write(json.toByteArray())

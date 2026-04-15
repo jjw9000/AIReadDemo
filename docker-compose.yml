@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: picturebook-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 1234
+      POSTGRES_DB: picturebook
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./services/BookManagementService/Data/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  book-management-service:
+    build:
+      context: ./services/BookManagementService
+      dockerfile: Dockerfile
+    container_name: picturebook-book-service
+    environment:
+      ASPNETCORE_URLS: "http://+:5018"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=picturebook;Username=postgres;Password=1234;"
+      ClipService__ModelPath: "/models/ViT-L-14-CLIP.onnx"
+    ports:
+      - "5018:5018"
+    volumes:
+      - clip_models:/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5018/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  ocr-service:
+    build:
+      context: ./services/OcrService
+      dockerfile: Dockerfile
+    container_name: picturebook-ocr-service
+    environment:
+      ASPNETCORE_URLS: "http://+:5017"
+    ports:
+      - "5017:5017"
+    depends_on:
+      - book-management-service
+
+volumes:
+  postgres_data:
+  clip_models:

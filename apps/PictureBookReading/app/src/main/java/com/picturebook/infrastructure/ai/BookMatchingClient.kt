@@ -3,6 +3,7 @@ package com.picturebook.infrastructure.ai
 import android.graphics.Bitmap
 import android.util.Log
 import com.google.gson.Gson
+import com.picturebook.config.AppConfig
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
@@ -11,7 +12,7 @@ import java.util.Base64
 import kotlin.coroutines.resume
 
 class BookMatchingClient(
-    private val apiBaseUrl: String = "http://192.168.3.18:5018"
+    private val apiBaseUrl: String = AppConfig.BOOK_API_URL
 ) {
     private val gson = Gson()
 
@@ -26,8 +27,8 @@ class BookMatchingClient(
             connection.requestMethod = "POST"
             connection.setRequestProperty("Content-Type", "application/json")
             connection.doOutput = true
-            connection.connectTimeout = 30000
-            connection.readTimeout = 60000
+            connection.connectTimeout = AppConfig.HTTP_CONNECT_TIMEOUT_MS
+            connection.readTimeout = AppConfig.HTTP_READ_TIMEOUT_MS
 
             connection.outputStream.use { os ->
                 os.write(json.toByteArray())
