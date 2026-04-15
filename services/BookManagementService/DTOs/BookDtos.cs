@@ -7,6 +7,8 @@ public class MatchRequest
 {
     [Required]
     public string ImageBase64 { get; set; } = string.Empty;
+
+    public Guid? BookId { get; set; }  // Optional: if set, match page within this book
 }
 
 public class RegisterRequest
@@ -19,6 +21,29 @@ public class RegisterRequest
     public string Title { get; set; } = string.Empty;
 
     public Dictionary<string, object>? Metadata { get; set; }
+}
+
+public class RegisterPageRequest
+{
+    [Required]
+    public string ImageBase64 { get; set; } = string.Empty;
+
+    [Required]
+    public Guid BookId { get; set; }
+
+    [Required]
+    public int PageNumber { get; set; }
+
+    public bool HasText { get; set; } = false;
+}
+
+public class MatchPageRequest
+{
+    [Required]
+    public string ImageBase64 { get; set; } = string.Empty;
+
+    [Required]
+    public Guid BookId { get; set; }
 }
 
 // Response DTOs
@@ -37,7 +62,29 @@ public class MatchResponse
     public string? Error { get; set; }
 }
 
+public class PageMatchResult
+{
+    public Guid Id { get; set; }
+    public int PageNumber { get; set; }
+    public float Similarity { get; set; }
+    public bool HasText { get; set; }
+}
+
+public class MatchPageResponse
+{
+    public bool Success { get; set; }
+    public PageMatchResult? Page { get; set; }
+    public string? Error { get; set; }
+}
+
 public class RegisterResponse
+{
+    public bool Success { get; set; }
+    public Guid? Id { get; set; }
+    public string? Error { get; set; }
+}
+
+public class RegisterPageResponse
 {
     public bool Success { get; set; }
     public Guid? Id { get; set; }
