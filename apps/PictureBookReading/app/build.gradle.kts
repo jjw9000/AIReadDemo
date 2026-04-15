@@ -65,5 +65,8 @@ dependencies {
     // ML Kit Text Recognition
     implementation("com.google.mlkit:text-recognition:16.0.0")
 
+    // OpenCV for Android - ORB feature matching
+    implementation(files("D:/Android/opencv/4.9/OpenCV-android-sdk/sdk/build/outputs/aar/opencv-debug.aar"))
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

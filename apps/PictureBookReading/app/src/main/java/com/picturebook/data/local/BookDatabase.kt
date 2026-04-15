@@ -10,7 +10,7 @@ import com.picturebook.data.local.entity.BookTextFtsEntity
 
 @Database(
     entities = [BookEntity::class, BookPageEntity::class, BookTextFtsEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class BookDatabase : RoomDatabase() {
@@ -26,7 +26,9 @@ abstract class BookDatabase : RoomDatabase() {
                     context.applicationContext,
                     BookDatabase::class.java,
                     "picturebook_database"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }

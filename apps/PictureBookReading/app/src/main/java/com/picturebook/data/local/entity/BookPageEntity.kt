@@ -22,5 +22,6 @@ data class BookPageEntity(
     val id: Long = 0,
     val bookId: String,
     val pageNumber: Int,
-    val fullText: String
+    val fullText: String,
+    val orbDescriptors: String? = null  // Base64 encoded ORB descriptors for image matching
 )
