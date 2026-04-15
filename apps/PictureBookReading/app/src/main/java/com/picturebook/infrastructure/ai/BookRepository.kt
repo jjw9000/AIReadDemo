@@ -21,6 +21,15 @@ class BookRepository(context: Context) {
     private val httpOcrClient = HttpOcrClient()
     private val orbMatcher = OrbPageMatcher()
 
+    // Page matching strategies - tried in order until one succeeds
+    private val pageMatchChain = PageMatchChain(
+        listOf(
+            OrbMatchStrategy(bookDao, orbMatcher),
+            JaccardMatchStrategy(bookDao, localSearchService),
+            OcrServiceStrategy(httpOcrClient)
+        )
+    )
+
     suspend fun searchBook(bitmap: Bitmap, extractedText: String? = null): BookSearchResult = withContext(Dispatchers.IO) {
         Log.d(TAG, "searchBook called, bitmap=${bitmap.width}x${bitmap.height}")
 
@@ -131,89 +140,34 @@ class BookRepository(context: Context) {
 
     /**
      * Read a page from a known book without doing cover match.
-     * 1. Try ORB image matching first (for picture books)
-     * 2. Try ML OCR + Jaccard text matching
-     * 3. If ML OCR finds nothing, fall back to OcrService API
-     * 4. Return matched page text or OCR result
+     * Uses strategy chain: ORB -> Jaccard -> OcrService
      */
     suspend fun readWithKnownBook(bitmap: Bitmap, bookId: String): ReadResult? = withContext(Dispatchers.IO) {
         Log.d(TAG, "readWithKnownBook called, bookId=$bookId")
 
-        // Step 1: Try ORB image matching first (for picture books without text)
-        val pagesWithOrb = bookDao.getPagesWithOrbDescriptors(bookId)
-        if (pagesWithOrb.isNotEmpty()) {
-            val orbDescriptors = pagesWithOrb.map { it.pageNumber to (it.orbDescriptors ?: "") }
-            val matchedPageNumber = orbMatcher.matchPage(bitmap, orbDescriptors)
-            if (matchedPageNumber != null) {
-                val matchedPage = pagesWithOrb.find { it.pageNumber == matchedPageNumber }
-                if (matchedPage != null && matchedPage.fullText.isNotBlank()) {
-                    Log.d(TAG, "ORB matched page $matchedPageNumber, using stored text")
-                    return@withContext ReadResult(
-                        text = matchedPage.fullText,
-                        matchedPageNumber = matchedPageNumber,
-                        usedStoredText = true
-                    )
-                }
-            }
-            Log.d(TAG, "ORB match failed or page has no text, trying OCR...")
-        }
-
-        // Step 2: Try ML OCR + Jaccard text matching
-        var ocrText = ocrClient.recognize(bitmap)?.fullText
-        if (ocrText == null) {
-            Log.d(TAG, "ML Kit OCR returned null, falling back to OcrService API")
-            ocrText = httpOcrClient.recognize(bitmap)?.fullText
-        }
-
-        if (ocrText.isNullOrBlank()) {
-            Log.d(TAG, "All OCR methods failed for known book")
+        val matchResult = pageMatchChain.match(bitmap, bookId)
+        if (matchResult == null) {
+            Log.d(TAG, "All strategies failed to match page")
             return@withContext null
         }
-        Log.d(TAG, "readWithKnownBook OCR text: $ocrText")
 
-        // Get pages for this book
-        val pages = bookDao.getPagesByBookId(bookId)
-        if (pages.isEmpty()) {
-            Log.d(TAG, "No pages found for book $bookId, using OCR text directly")
-            return@withContext ReadResult(text = ocrText, matchedPageNumber = 0, usedStoredText = false)
+        Log.d(TAG, "Matched page ${matchResult.pageNumber} using ${matchResult.strategy} strategy")
+
+        // Save ORB descriptors for future matching if Jaccard matched
+        if (matchResult.strategy == "Jaccard" && matchResult.pageNumber > 0) {
+            val pages = bookDao.getPagesByBookId(bookId)
+            val matchedPage = pages.find { it.pageNumber == matchResult.pageNumber }
+            if (matchedPage != null && matchedPage.orbDescriptors.isNullOrBlank()) {
+                Log.d(TAG, "Saving ORB descriptors for page ${matchResult.pageNumber} for future matching")
+                savePageOrbDescriptors(bookId, matchResult.pageNumber, bitmap)
+            }
         }
 
-        // Match OCR text to pages using Jaccard
-        val ocrTokens = localSearchService.tokenizeToSet(ocrText)
-        val scored = pages.mapNotNull { page ->
-            if (page.fullText.isBlank()) {
-                null
-            } else {
-                val pageTokens = localSearchService.tokenizeToSet(page.fullText)
-                val similarity = localSearchService.calculateJaccardSimilarity(ocrTokens, pageTokens)
-                if (similarity > 0) {
-                    page to similarity
-                } else {
-                    null
-                }
-            }
-        }.sortedByDescending { it.second }
-
-        val bestMatch = scored.firstOrNull()
-        return@withContext if (bestMatch != null && bestMatch.second >= 0.3f) {
-            val (matchedPage, similarity) = bestMatch
-            Log.d(TAG, "Jaccard matched page ${matchedPage.pageNumber} with similarity $similarity, stored text: ${matchedPage.fullText.take(50)}")
-
-            // Save ORB descriptors for future matching (if not already saved)
-            if (matchedPage.orbDescriptors.isNullOrBlank()) {
-                Log.d(TAG, "Saving ORB descriptors for page ${matchedPage.pageNumber} for future matching")
-                savePageOrbDescriptors(bookId, matchedPage.pageNumber, bitmap)
-            }
-
-            ReadResult(
-                text = matchedPage.fullText,
-                matchedPageNumber = matchedPage.pageNumber,
-                usedStoredText = true
-            )
-        } else {
-            Log.d(TAG, "No page match or low similarity, using OCR text directly")
-            ReadResult(text = ocrText, matchedPageNumber = 0, usedStoredText = false)
-        }
+        ReadResult(
+            text = matchResult.text,
+            matchedPageNumber = matchResult.pageNumber,
+            usedStoredText = matchResult.usedStoredText
+        )
     }
 
     /**
