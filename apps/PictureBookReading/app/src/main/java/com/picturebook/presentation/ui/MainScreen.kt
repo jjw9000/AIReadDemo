@@ -30,8 +30,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.picturebook.hardware.AudioService
-import com.picturebook.infrastructure.ai.HttpOcrClient
 import com.picturebook.infrastructure.ai.BookMatchingClient
+import com.picturebook.infrastructure.ai.BookRepository
 import com.picturebook.presentation.ui.theme.ReadingColor
 import kotlinx.coroutines.*
 
@@ -48,8 +48,7 @@ fun MainScreen() {
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
 
     val audioService = remember { AudioService(context) }
-    val httpOcrClient = remember { HttpOcrClient() }
-    val bookMatchingClient = remember { BookMatchingClient() }
+    val bookRepository = remember { BookRepository(context) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -211,7 +210,7 @@ fun MainScreen() {
                             statusText = "正在识别页面文字..."
                             captureAndRead(
                                 context, lifecycleOwner, previewView,
-                                httpOcrClient, audioService, scope,
+                                bookRepository, audioService, scope,
                                 onTextRecognized = { text ->
                                     isReading = false
                                     statusText = "朗读中..."
@@ -219,6 +218,11 @@ fun MainScreen() {
                                         isReading = false
                                         statusText = "朗读完成"
                                     }
+                                },
+                                onBookFound = { name ->
+                                    isReading = false
+                                    bookName = name
+                                    statusText = "识别成功"
                                 },
                                 onError = {
                                     isReading = false
@@ -243,7 +247,7 @@ fun MainScreen() {
                             statusText = "正在识别绘本..."
                             captureAndRecognize(
                                 context, lifecycleOwner, previewView,
-                                httpOcrClient, bookMatchingClient, scope,
+                                bookRepository, scope,
                                 onBookRecognized = { name ->
                                     isReading = false
                                     bookName = name
@@ -318,10 +322,11 @@ private fun captureAndRead(
     context: android.content.Context,
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView?,
-    httpOcrClient: HttpOcrClient,
+    bookRepository: BookRepository,
     audioService: AudioService,
     scope: CoroutineScope,
     onTextRecognized: (String) -> Unit,
+    onBookFound: (String) -> Unit,
     onError: () -> Unit
 ) {
     var imageCapture: ImageCapture? = null
@@ -329,11 +334,11 @@ private fun captureAndRead(
     if (imageCapture == null) {
         bindCamera(context, lifecycleOwner, previewView) { cap ->
             imageCapture = cap
-            doCaptureAndRead(context, cap, httpOcrClient, audioService, scope, onTextRecognized, onError)
+            doCaptureAndRead(context, cap, bookRepository, audioService, scope, onTextRecognized, onBookFound, onError)
         }
     } else {
         imageCapture?.let {
-            doCaptureAndRead(context, it, httpOcrClient, audioService, scope, onTextRecognized, onError)
+            doCaptureAndRead(context, it, bookRepository, audioService, scope, onTextRecognized, onBookFound, onError)
         }
     }
 }
@@ -341,10 +346,11 @@ private fun captureAndRead(
 private fun doCaptureAndRead(
     context: android.content.Context,
     imageCapture: ImageCapture,
-    httpOcrClient: HttpOcrClient,
+    bookRepository: BookRepository,
     audioService: AudioService,
     scope: CoroutineScope,
     onTextRecognized: (String) -> Unit,
+    onBookFound: (String) -> Unit,
     onError: () -> Unit
 ) {
     imageCapture.takePicture(
@@ -354,10 +360,21 @@ private fun doCaptureAndRead(
                 val bitmap = image.toBitmap()
                 image.close()
                 scope.launch(Dispatchers.IO) {
-                    val result = httpOcrClient.recognize(bitmap)
+                    val matchResult = bookRepository.searchBook(bitmap)
                     withContext(Dispatchers.Main) {
-                        if (result != null && result.fullText.isNotBlank()) {
-                            onTextRecognized(result.fullText)
+                        if (matchResult != null) {
+                            val bookDetails = bookRepository.getBookDetails(matchResult.bookId)
+                            if (bookDetails != null && bookDetails.pages.isNotEmpty()) {
+                                val currentPage = bookDetails.pages.find { it.pageNumber == matchResult.pageNumber }
+                                    ?: bookDetails.pages.firstOrNull()
+                                if (currentPage != null && currentPage.fullText.isNotBlank()) {
+                                    onTextRecognized(currentPage.fullText)
+                                } else {
+                                    onBookFound(matchResult.title)
+                                }
+                            } else {
+                                onBookFound(matchResult.title)
+                            }
                         } else {
                             onError()
                         }
@@ -376,8 +393,7 @@ private fun captureAndRecognize(
     context: android.content.Context,
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView?,
-    httpOcrClient: HttpOcrClient,
-    bookMatchingClient: BookMatchingClient,
+    bookRepository: BookRepository,
     scope: CoroutineScope,
     onBookRecognized: (String) -> Unit,
     onImageMatchSuccess: (String) -> Unit,
@@ -416,27 +432,14 @@ private fun captureAndRecognize(
                             val bitmap = image.toBitmap()
                             image.close()
                             scope.launch(Dispatchers.IO) {
-                                val matchResult = bookMatchingClient.matchBook(bitmap)
-                                if (matchResult != null && matchResult.similarity > 0.85f) {
-                                    onImageMatchSuccess(matchResult.title)
-                                } else {
-                                    onImageMatchFailed()
-                                }
-
-                                /*val result = httpOcrClient.recognize(bitmap)
+                                val matchResult = bookRepository.searchBook(bitmap)
                                 withContext(Dispatchers.Main) {
-                                    if (result != null && result.fullText.isNotBlank()) {
-                                        onBookRecognized(result.fullText)
+                                    if (matchResult != null) {
+                                        onImageMatchSuccess(matchResult.title)
                                     } else {
-                                        // OCR failed, try image matching for picture books
-                                        val matchResult = bookMatchingClient.matchBook(bitmap)
-                                        if (matchResult != null && matchResult.similarity > 0.85f) {
-                                            onImageMatchSuccess(matchResult.title)
-                                        } else {
-                                            onImageMatchFailed()
-                                        }
+                                        onImageMatchFailed()
                                     }
-                                }*/
+                                }
                             }
                         }
                         override fun onError(exception: ImageCaptureException) {
