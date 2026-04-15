@@ -1,0 +1,38 @@
+using OcrService.Services;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// Register OCR service
+builder.Services.AddHttpClient("OcrService");
+builder.Services.AddScoped<IOcrService, PaddleOcrService>();
+
+// CORS
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
+    });
+});
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseCors();
+app.MapControllers();
+
+// Health check at root
+app.MapGet("/", () => Results.Ok(new { service = "OcrService", version = "1.0.0", status = "running" }));
+
+app.Run();

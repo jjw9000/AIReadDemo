@@ -4,7 +4,8 @@ gradle/
 
 # Build outputs
 build/
-app/build/
+**/bin/
+**/obj/
 
 # Android
 local.properties

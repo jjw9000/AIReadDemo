@@ -30,7 +30,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.picturebook.hardware.AudioService
-import com.picturebook.infrastructure.ai.MlKitOcrClient
+import com.picturebook.infrastructure.ai.HttpOcrClient
 import com.picturebook.presentation.ui.theme.ReadingColor
 import kotlinx.coroutines.*
 
@@ -47,7 +47,7 @@ fun MainScreen() {
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
 
     val audioService = remember { AudioService(context) }
-    val mlKitOcrClient = remember { MlKitOcrClient() }
+    val mlKitOcrClient = remember { HttpOcrClient() }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -308,7 +308,7 @@ private fun captureAndRead(
     context: android.content.Context,
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView?,
-    mlKitOcrClient: MlKitOcrClient,
+    mlKitOcrClient: HttpOcrClient,
     audioService: AudioService,
     scope: CoroutineScope,
     onTextRecognized: (String) -> Unit,
@@ -331,7 +331,7 @@ private fun captureAndRead(
 private fun doCaptureAndRead(
     context: android.content.Context,
     imageCapture: ImageCapture,
-    mlKitOcrClient: MlKitOcrClient,
+    mlKitOcrClient: HttpOcrClient,
     audioService: AudioService,
     scope: CoroutineScope,
     onTextRecognized: (String) -> Unit,
@@ -366,7 +366,7 @@ private fun captureAndRecognize(
     context: android.content.Context,
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView?,
-    mlKitOcrClient: MlKitOcrClient,
+    mlKitOcrClient: HttpOcrClient,
     scope: CoroutineScope,
     onBookRecognized: (String) -> Unit,
     onError: () -> Unit

@@ -52,8 +52,8 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
 
-    implementation("com.google.mlkit:text-recognition:16.0.0")
-    implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
+    // Network
+    implementation("com.google.code.gson:gson:2.10.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
