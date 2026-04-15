@@ -169,8 +169,8 @@ public class PaddleOcrService : IOcrService
             var fullText = sb.ToString().Trim();
             if (string.IsNullOrWhiteSpace(fullText)) return null;
 
-            // Strip markdown formatting
-            return StripMarkdown(fullText);
+            // Strip markdown formatting and remove internal spaces
+            return StripMarkdown(fullText).Replace(" ", "");
         }
         catch (JsonException ex)
         {
