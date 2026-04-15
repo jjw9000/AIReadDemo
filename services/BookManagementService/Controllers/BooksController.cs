@@ -4,6 +4,7 @@ using BookManagementService.Data;
 using BookManagementService.DTOs;
 using BookManagementService.Entities;
 using BookManagementService.Services;
+using Npgsql;
 
 namespace BookManagementService.Controllers;
 
@@ -45,31 +46,37 @@ public class BooksController : ControllerBase
 
             // Extract features from image
             var queryEmbedding = await _clipService.ExtractFeaturesAsync(request.ImageBase64);
+            var vectorStr = "[" + string.Join(",", queryEmbedding) + "]";
 
-            // Search in database using cosine similarity
-            var books = await _context.Books
-                .Where(b => b.CoverEmbedding != null)
-                .ToListAsync();
+            // Use raw SQL for vector similarity search (like reference project)
+            var conn = (NpgsqlConnection)_context.Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
 
-            var results = books
-                .Select(b => new
+            await using var cmd = new NpgsqlCommand();
+            cmd.Connection = conn;
+            cmd.CommandText = @"
+                SELECT id, title, 1 - (cover_embedding <=> @vector::vector) AS similarity
+                FROM books
+                WHERE cover_embedding IS NOT NULL
+                ORDER BY cover_embedding <=> @vector::vector
+                LIMIT 5";
+            cmd.Parameters.AddWithValue("@vector", vectorStr);
+
+            var results = new List<BookMatchResult>();
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var similarity = (float)(double)reader["similarity"];
+                if (similarity > 0.7f)
                 {
-                    Book = b,
-                    Similarity = CosineSimilarity(queryEmbedding, b.CoverEmbedding!)
-                })
-                .Where(x => x.Similarity > 0.7f)
-                .OrderByDescending(x => x.Similarity)
-                .Take(5)
-                .Select(x => new BookMatchResult
-                {
-                    Id = x.Book.Id,
-                    Title = x.Book.Title,
-                    Similarity = x.Similarity,
-                    Metadata = string.IsNullOrEmpty(x.Book.Metadata)
-                        ? null
-                        : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(x.Book.Metadata)
-                })
-                .ToList();
+                    results.Add(new BookMatchResult
+                    {
+                        Id = reader.GetGuid(0),
+                        Title = reader.GetString(1),
+                        Similarity = similarity
+                    });
+                }
+            }
 
             _logger.LogInformation("Found {Count} matching books", results.Count);
 
@@ -99,27 +106,37 @@ public class BooksController : ControllerBase
 
             // Extract features from image
             var embedding = await _clipService.ExtractFeaturesAsync(request.ImageBase64);
+            var vectorStr = "[" + string.Join(",", embedding) + "]";
 
-            var book = new Book
-            {
-                Title = request.Title,
-                CoverEmbedding = embedding,
-                Metadata = request.Metadata != null
-                    ? System.Text.Json.JsonSerializer.Serialize(request.Metadata)
-                    : null,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
+            // Use raw SQL to insert with vector
+            var conn = (NpgsqlConnection)_context.Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
 
-            _context.Books.Add(book);
-            await _context.SaveChangesAsync();
+            await using var cmd = new NpgsqlCommand();
+            cmd.Connection = conn;
+            cmd.CommandText = @"
+                INSERT INTO books (id, title, cover_embedding, metadata, created_at, updated_at)
+                VALUES (@id, @title, @vector::vector, @metadata, @createdAt, @updatedAt)
+                RETURNING id";
+            var bookId = Guid.NewGuid();
+            cmd.Parameters.AddWithValue("@id", bookId);
+            cmd.Parameters.AddWithValue("@title", request.Title);
+            cmd.Parameters.AddWithValue("@vector", vectorStr);
+            cmd.Parameters.AddWithValue("@metadata", request.Metadata != null
+                ? System.Text.Json.JsonSerializer.Serialize(request.Metadata)
+                : (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
+            cmd.Parameters.AddWithValue("@updatedAt", DateTime.UtcNow);
 
-            _logger.LogInformation("Book registered with ID: {Id}", book.Id);
+            var result = await cmd.ExecuteScalarAsync();
+            var insertedId = (Guid)result!;
+
+            _logger.LogInformation("Book registered with ID: {Id}", insertedId);
 
             return Ok(new RegisterResponse
             {
                 Success = true,
-                Id = book.Id
+                Id = insertedId
             });
         }
         catch (Exception ex)
@@ -152,24 +169,5 @@ public class BooksController : ControllerBase
                 : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(book.Metadata),
             CreatedAt = book.CreatedAt
         });
-    }
-
-    private static float CosineSimilarity(float[] a, float[] b)
-    {
-        if (a.Length != b.Length)
-            return 0;
-
-        float dotProduct = 0;
-        float normA = 0;
-        float normB = 0;
-
-        for (int i = 0; i < a.Length; i++)
-        {
-            dotProduct += a[i] * b[i];
-            normA += a[i] * a[i];
-            normB += b[i] * b[i];
-        }
-
-        return dotProduct / ((float)Math.Sqrt(normA) * (float)Math.Sqrt(normB));
     }
 }

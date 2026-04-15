@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS books (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title VARCHAR(255) NOT NULL,
-    cover_embedding vector(512),
+    cover_embedding vector(768),
     metadata jsonb,
     created_at timestamp DEFAULT NOW(),
     updated_at timestamp DEFAULT NOW()

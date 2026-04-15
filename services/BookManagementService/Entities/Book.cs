@@ -16,7 +16,7 @@ public class Book
     public string Title { get; set; } = string.Empty;
 
     [Column("cover_embedding")]
-    public float[]? CoverEmbedding { get; set; }
+    public string? CoverEmbedding { get; set; }  // stored as vector in DB
 
     [Column("metadata", TypeName = "jsonb")]
     public string? Metadata { get; set; }

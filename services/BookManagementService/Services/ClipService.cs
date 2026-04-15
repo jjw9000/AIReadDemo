@@ -3,31 +3,68 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using SessionOptions = Microsoft.ML.OnnxRuntime.SessionOptions;
+using GraphOptimizationLevel = Microsoft.ML.OnnxRuntime.GraphOptimizationLevel;
 
 namespace BookManagementService.Services;
 
 public class ClipService : IClipService, IDisposable
 {
-    private readonly InferenceSession _session;
+    private InferenceSession? _session;
     private readonly ILogger<ClipService> _logger;
-    private readonly int _imageSize = 224;
+    private readonly string _modelPath;
+
+    // CLIP ViT-L-14 constants
+    private const int InputSize = 224;
+    private const int EmbeddingDim = 768;
+
+    // ImageNet normalization
+    private static readonly float[] Mean = { 0.485f, 0.456f, 0.406f };
+    private static readonly float[] Std = { 0.229f, 0.224f, 0.225f };
 
     public ClipService(ILogger<ClipService> logger, IConfiguration configuration)
     {
         _logger = logger;
-        var modelPath = configuration["ClipService:ModelPath"] ?? "models/ViT-L-14-CLIP.onnx";
+        _modelPath = configuration["ClipService:ModelPath"] ?? "models/ViT-L-14-CLIP.onnx";
 
-        var sessionOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
-        sessionOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-        _session = new InferenceSession(modelPath, sessionOptions);
+        InitializeSession();
+    }
 
-        _logger.LogInformation("CLIP ONNX model loaded from {ModelPath}", modelPath);
+    private void InitializeSession()
+    {
+        try
+        {
+            var sessionOptions = new SessionOptions();
+            sessionOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+
+            _session = new InferenceSession(_modelPath, sessionOptions);
+            _logger.LogInformation("CLIP ONNX model loaded from {ModelPath}", _modelPath);
+
+            if (_session.InputMetadata.Count > 0)
+            {
+                _logger.LogInformation("Input metadata: {InputKeys}", string.Join(", ", _session.InputMetadata.Keys));
+            }
+            if (_session.OutputMetadata.Count > 0)
+            {
+                _logger.LogInformation("Output metadata: {OutputKeys}", string.Join(", ", _session.OutputMetadata.Keys));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to initialize CLIP ONNX session");
+            throw;
+        }
     }
 
     public async Task<float[]> ExtractFeaturesAsync(string imageBase64)
     {
         return await Task.Run(() =>
         {
+            if (_session == null)
+            {
+                throw new InvalidOperationException("CLIP ONNX session not initialized");
+            }
+
             try
             {
                 // Handle data URI format
@@ -39,41 +76,29 @@ public class ClipService : IClipService, IDisposable
                 var imageBytes = Convert.FromBase64String(imageBase64);
                 using var image = Image.Load<Rgb24>(imageBytes);
 
-                // Resize to 224x224
-                image.Mutate(x => x.Resize(new ResizeOptions
-                {
-                    Size = new Size(_imageSize, _imageSize),
-                    Mode = ResizeMode.Crop
-                }));
+                // Preprocess image
+                var preprocessedData = PreprocessImage(image);
 
-                // Preprocess: normalize
-                var tensor = PreprocessImage(image);
+                // Create input tensor [1, 3, 224, 224]
+                var inputTensor = new DenseTensor<float>(preprocessedData, new[] { 1, 3, InputSize, InputSize });
+
+                // Determine input name dynamically
+                var inputName = _session.InputMetadata.Keys.FirstOrDefault() ?? "image";
 
                 // Run inference
-                var inputs = new[]
+                var inputs = new List<NamedOnnxValue>
                 {
-                    NamedOnnxValue.CreateFromTensor("input", tensor)
+                    NamedOnnxValue.CreateFromTensor(inputName, inputTensor)
                 };
 
                 using var results = _session.Run(inputs);
-                var output = results.FirstOrDefault();
-
-                if (output == null)
-                {
-                    throw new InvalidOperationException("CLIP inference returned no output");
-                }
-
-                var embedding = output.AsEnumerable<float>().ToArray();
+                var output = results.First().AsEnumerable<float>().ToArray();
 
                 // L2 normalize
-                var norm = (float)Math.Sqrt(embedding.Sum(x => x * x));
-                for (int i = 0; i < embedding.Length; i++)
-                {
-                    embedding[i] /= norm;
-                }
+                L2Normalize(output);
 
-                _logger.LogDebug("Extracted CLIP features: dimension={Dimension}", embedding.Length);
-                return embedding;
+                _logger.LogDebug("Extracted CLIP features: dimension={Dimension}", output.Length);
+                return output;
             }
             catch (Exception ex)
             {
@@ -83,26 +108,54 @@ public class ClipService : IClipService, IDisposable
         });
     }
 
-    private Tensor<float> PreprocessImage(Image<Rgb24> image)
+    private float[] PreprocessImage(Image<Rgb24> image)
     {
-        var tensor = new DenseTensor<float>(new[] { 3, _imageSize, _imageSize });
-
-        // ImageNet normalization
-        float[] mean = { 0.48145466f, 0.4578275f, 0.40821073f };
-        float[] std = { 0.26862954f, 0.26130258f, 0.27577711f };
-
-        for (int y = 0; y < _imageSize; y++)
+        // Resize to 224x224
+        image.Mutate(x => x.Resize(new ResizeOptions
         {
-            for (int x = 0; x < _imageSize; x++)
+            Size = new Size(InputSize, InputSize),
+            Mode = ResizeMode.Crop
+        }));
+
+        // Preprocess: HWC -> CHW, normalize with ImageNet mean/std
+        var result = new float[3 * InputSize * InputSize];
+
+        image.ProcessPixelRows(pixelAccessor =>
+        {
+            int idx = 0;
+            for (int y = 0; y < InputSize; y++)
             {
-                var pixel = image[x, y];
-                tensor[0, y, x] = (pixel.R / 255f - mean[0]) / std[0];
-                tensor[1, y, x] = (pixel.G / 255f - mean[1]) / std[1];
-                tensor[2, y, x] = (pixel.B / 255f - mean[2]) / std[2];
+                var row = pixelAccessor.GetRowSpan(y);
+                for (int x = 0; x < InputSize; x++)
+                {
+                    var pixel = row[x];
+                    result[idx++] = (pixel.R / 255f - Mean[0]) / Std[0];
+                    result[idx++] = (pixel.G / 255f - Mean[1]) / Std[1];
+                    result[idx++] = (pixel.B / 255f - Mean[2]) / Std[2];
+                }
             }
+        });
+
+        return result;
+    }
+
+    private void L2Normalize(float[] vector)
+    {
+        float sum = 0;
+        foreach (var v in vector)
+        {
+            sum += v * v;
         }
 
-        return tensor;
+        float magnitude = MathF.Sqrt(sum);
+
+        if (magnitude > 1e-10f)
+        {
+            for (int i = 0; i < vector.Length; i++)
+            {
+                vector[i] /= magnitude;
+            }
+        }
     }
 
     public void Dispose()
