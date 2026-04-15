@@ -1,0 +1,19 @@
+# Gradle
+.gradle/
+gradle/
+
+# Build outputs
+build/
+app/build/
+
+# Android
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Temporary files
+*.log
+*.tmp
