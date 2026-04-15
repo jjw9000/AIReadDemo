@@ -11,7 +11,7 @@ import java.util.Base64
 import kotlin.coroutines.resume
 
 class BookMatchingClient(
-    private val apiBaseUrl: String = "http://192.168.0.101:5018"
+    private val apiBaseUrl: String = "http://192.168.0.100:5018"
 ) {
     private val gson = Gson()
 

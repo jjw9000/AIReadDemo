@@ -12,15 +12,18 @@ public class BooksController : ControllerBase
 {
     private readonly IBookRepository _bookRepository;
     private readonly IClipService _clipService;
+    private readonly IBookDetectionService _bookDetectionService;
     private readonly ILogger<BooksController> _logger;
 
     public BooksController(
         IBookRepository bookRepository,
         IClipService clipService,
+        IBookDetectionService bookDetectionService,
         ILogger<BooksController> logger)
     {
         _bookRepository = bookRepository;
         _clipService = clipService;
+        _bookDetectionService = bookDetectionService;
         _logger = logger;
     }
 
@@ -43,7 +46,23 @@ public class BooksController : ControllerBase
             _logger.LogInformation("Received match request, image length: {Length}, BookId: {BookId}",
                 request.ImageBase64.Length, request.BookId);
 
-            var queryEmbedding = await _clipService.ExtractFeaturesAsync(request.ImageBase64);
+            // Handle data URI format
+            var base64Data = request.ImageBase64;
+            if (base64Data.Contains(','))
+            {
+                base64Data = base64Data.Split(',')[1];
+            }
+            var imageBytes = Convert.FromBase64String(base64Data);
+
+            // Detect and crop book region using OpenCV
+            var detectionResult = await _bookDetectionService.DetectAndCropAsync(imageBytes);
+            var croppedBytes = detectionResult?.CroppedImage ?? imageBytes;
+
+            _logger.LogInformation("Using image size: {Size} bytes (detected: {Detected})",
+                croppedBytes.Length, detectionResult != null);
+
+            // Extract CLIP features from cropped image
+            var queryEmbedding = _clipService.ExtractFeatures(croppedBytes);
             var vectorStr = "[" + string.Join(",", queryEmbedding) + "]";
 
             if (request.BookId.HasValue)

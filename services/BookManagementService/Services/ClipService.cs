@@ -60,52 +60,50 @@ public class ClipService : IClipService, IDisposable
     {
         return await Task.Run(() =>
         {
-            if (_session == null)
+            // Handle data URI format
+            if (imageBase64.Contains(','))
             {
-                throw new InvalidOperationException("CLIP ONNX session not initialized");
+                imageBase64 = imageBase64.Split(',')[1];
             }
 
-            try
-            {
-                // Handle data URI format
-                if (imageBase64.Contains(','))
-                {
-                    imageBase64 = imageBase64.Split(',')[1];
-                }
-
-                var imageBytes = Convert.FromBase64String(imageBase64);
-                using var image = Image.Load<Rgb24>(imageBytes);
-
-                // Preprocess image
-                var preprocessedData = PreprocessImage(image);
-
-                // Create input tensor [1, 3, 224, 224]
-                var inputTensor = new DenseTensor<float>(preprocessedData, new[] { 1, 3, InputSize, InputSize });
-
-                // Determine input name dynamically
-                var inputName = _session.InputMetadata.Keys.FirstOrDefault() ?? "image";
-
-                // Run inference
-                var inputs = new List<NamedOnnxValue>
-                {
-                    NamedOnnxValue.CreateFromTensor(inputName, inputTensor)
-                };
-
-                using var results = _session.Run(inputs);
-                var output = results.First().AsEnumerable<float>().ToArray();
-
-                // L2 normalize
-                L2Normalize(output);
-
-                _logger.LogDebug("Extracted CLIP features: dimension={Dimension}", output.Length);
-                return output;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to extract CLIP features");
-                throw;
-            }
+            var imageBytes = Convert.FromBase64String(imageBase64);
+            return ExtractFeatures(imageBytes);
         });
+    }
+
+    public float[] ExtractFeatures(byte[] imageBytes)
+    {
+        if (_session == null)
+        {
+            throw new InvalidOperationException("CLIP ONNX session not initialized");
+        }
+
+        try
+        {
+            using var image = Image.Load<Rgb24>(imageBytes);
+            var preprocessedData = PreprocessImage(image);
+
+            var inputTensor = new DenseTensor<float>(preprocessedData, new[] { 1, 3, InputSize, InputSize });
+            var inputName = _session.InputMetadata.Keys.FirstOrDefault() ?? "image";
+
+            var inputs = new List<NamedOnnxValue>
+            {
+                NamedOnnxValue.CreateFromTensor(inputName, inputTensor)
+            };
+
+            using var results = _session.Run(inputs);
+            var output = results.First().AsEnumerable<float>().ToArray();
+
+            L2Normalize(output);
+
+            _logger.LogDebug("Extracted CLIP features: dimension={Dimension}", output.Length);
+            return output;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to extract CLIP features");
+            throw;
+        }
     }
 
     private float[] PreprocessImage(Image<Rgb24> image)

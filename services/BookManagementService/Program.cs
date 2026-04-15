@@ -22,6 +22,9 @@ builder.Services.AddScoped<IBookRepository, BookRepository>();
 // CLIP Service (ONNX)
 builder.Services.AddSingleton<IClipService, ClipService>();
 
+// Book Detection Service (OpenCV)
+builder.Services.AddSingleton<IBookDetectionService, BookDetectionService>();
+
 // CORS
 builder.Services.AddCors(options =>
 {
