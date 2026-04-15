@@ -1,7 +1,8 @@
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
-using System.Drawing;
-using System.Drawing.Imaging;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 namespace BookManagementService.Services;
 
@@ -14,9 +15,9 @@ public class ClipService : IClipService, IDisposable
     public ClipService(ILogger<ClipService> logger, IConfiguration configuration)
     {
         _logger = logger;
-        var modelPath = configuration["ClipService:ModelPath"] ?? "models/clip-vit-base-patch32.onnx";
+        var modelPath = configuration["ClipService:ModelPath"] ?? "models/ViT-L-14-CLIP.onnx";
 
-        var sessionOptions = new SessionOptions();
+        var sessionOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
         sessionOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
         _session = new InferenceSession(modelPath, sessionOptions);
 
@@ -36,11 +37,17 @@ public class ClipService : IClipService, IDisposable
                 }
 
                 var imageBytes = Convert.FromBase64String(imageBase64);
-                using var ms = new MemoryStream(imageBytes);
-                using var bitmap = new Bitmap(ms);
+                using var image = Image.Load<Rgb24>(imageBytes);
 
-                // Preprocess: resize to 224x224 and normalize
-                var tensor = PreprocessImage(bitmap);
+                // Resize to 224x224
+                image.Mutate(x => x.Resize(new ResizeOptions
+                {
+                    Size = new Size(_imageSize, _imageSize),
+                    Mode = ResizeMode.Crop
+                }));
+
+                // Preprocess: normalize
+                var tensor = PreprocessImage(image);
 
                 // Run inference
                 var inputs = new[]
@@ -76,9 +83,8 @@ public class ClipService : IClipService, IDisposable
         });
     }
 
-    private Tensor<float> PreprocessImage(Bitmap bitmap)
+    private Tensor<float> PreprocessImage(Image<Rgb24> image)
     {
-        using var resized = new Bitmap(bitmap, new Size(_imageSize, _imageSize));
         var tensor = new DenseTensor<float>(new[] { 3, _imageSize, _imageSize });
 
         // ImageNet normalization
@@ -89,7 +95,7 @@ public class ClipService : IClipService, IDisposable
         {
             for (int x = 0; x < _imageSize; x++)
             {
-                var pixel = resized.GetPixel(x, y);
+                var pixel = image[x, y];
                 tensor[0, y, x] = (pixel.R / 255f - mean[0]) / std[0];
                 tensor[1, y, x] = (pixel.G / 255f - mean[1]) / std[1];
                 tensor[2, y, x] = (pixel.B / 255f - mean[2]) / std[2];
