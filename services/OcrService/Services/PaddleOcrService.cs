@@ -10,6 +10,7 @@ public class PaddleOcrService : IOcrService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<PaddleOcrService> _logger;
     private readonly string _apiUrl;
+    private readonly string _token;
     private readonly int _timeoutSeconds;
 
     public PaddleOcrService(
@@ -19,7 +20,8 @@ public class PaddleOcrService : IOcrService
     {
         _httpClientFactory = httpClientFactory;
         _logger = logger;
-        _apiUrl = configuration["OcrService:ApiUrl"] ?? "http://localhost:5007/";
+        _apiUrl = configuration["OcrService:ApiUrl"] ?? "https://t8r5f9e0udm8c162.aistudio-app.com/layout-parsing";
+        _token = configuration["OcrService:Token"] ?? "";
         _timeoutSeconds = configuration.GetValue("OcrService:TimeoutSeconds", 120);
     }
 
@@ -32,7 +34,7 @@ public class PaddleOcrService : IOcrService
             _logger.LogInformation("Starting OCR, image length: {Length}, task: {Task}",
                 imageBase64.Length, task);
 
-            var result = await CallPaddleVlApiAsync(imageBase64, task);
+            var result = await CallPaddleLayoutApiAsync(imageBase64);
 
             sw.Stop();
             _logger.LogInformation("OCR completed in {ElapsedMs}ms", sw.ElapsedMilliseconds);
@@ -86,7 +88,7 @@ public class PaddleOcrService : IOcrService
         {
             using var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(5);
-            var response = await client.GetAsync($"{_apiUrl}/health");
+            var response = await client.GetAsync(_apiUrl);
             return response.IsSuccessStatusCode;
         }
         catch
@@ -95,7 +97,7 @@ public class PaddleOcrService : IOcrService
         }
     }
 
-    private async Task<string?> CallPaddleVlApiAsync(string imageBase64, string task)
+    private async Task<string?> CallPaddleLayoutApiAsync(string imageBase64)
     {
         using var client = _httpClientFactory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(_timeoutSeconds);
@@ -108,40 +110,83 @@ public class PaddleOcrService : IOcrService
 
         var requestBody = new
         {
-            image_base64 = imageBase64,
-            task = task
+            file = imageBase64,
+            fileType = 1,
+            useDocOrientationClassify = false,
+            useDocUnwarping = false,
+            useChartRecognition = false
         };
 
         var json = JsonSerializer.Serialize(requestBody);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        _logger.LogDebug("Calling Paddle VL API at {Url}", _apiUrl);
+        _logger.LogDebug("Calling Paddle Layout API at {Url}", _apiUrl);
 
-        var response = await client.PostAsync($"{_apiUrl}/ocr/recognize-simple", content);
+        var request = new HttpRequestMessage(HttpMethod.Post, _apiUrl);
+        request.Headers.Add("Authorization", $"token {_token}");
+        request.Content = content;
+
+        var response = await client.SendAsync(request);
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogError("Paddle VL API returned {StatusCode}: {Reason}",
+            _logger.LogError("Paddle Layout API returned {StatusCode}: {Reason}",
                 response.StatusCode, response.ReasonPhrase);
             return null;
         }
 
         var responseBody = await response.Content.ReadAsStringAsync();
-        _logger.LogDebug("Paddle VL API response: {Response}", responseBody);
+        _logger.LogDebug("Paddle Layout API response: {Response}", responseBody);
 
-        using var doc = JsonDocument.Parse(responseBody);
-        var root = doc.RootElement;
-
-        if (root.TryGetProperty("text", out var textProp))
+        try
         {
-            return textProp.GetString();
-        }
+            using var doc = JsonDocument.Parse(responseBody);
 
-        if (root.TryGetProperty("full_text", out var fullTextProp))
+            if (!doc.RootElement.TryGetProperty("result", out var result)) return null;
+            if (!result.TryGetProperty("layoutParsingResults", out var items)) return null;
+
+            var sb = new StringBuilder();
+            foreach (var item in items.EnumerateArray())
+            {
+                if (item.TryGetProperty("markdown", out var md) &&
+                    md.TryGetProperty("text", out var textEl))
+                {
+                    var text = textEl.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        sb.AppendLine(text);
+                }
+            }
+
+            var fullText = sb.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(fullText)) return null;
+
+            // Strip markdown formatting
+            return StripMarkdown(fullText);
+        }
+        catch (JsonException ex)
         {
-            return fullTextProp.GetString();
+            _logger.LogError(ex, "Failed to parse Paddle Layout response");
+            return null;
         }
+    }
 
-        return null;
+    private static string StripMarkdown(string markdown)
+    {
+        var text = markdown;
+        // Remove images ![...](...)
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"!\[.*?\]\(.*?\)", "");
+        // Remove links [...](...)
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\[([^\]]*)\]\([^\)]*\)", "$1");
+        // Remove headers #
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"^#{1,6}\s*", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+        // Remove bold/italic ** * __ _
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"(\*\*|__)(.*?)\1", "$2");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"(\*|_)(.*?)\1", "$2");
+        // Remove code blocks ``` and inline code `
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"```[\s\S]*?```", "");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"`([^`]*)`", "$1");
+        // Merge multiple blank lines
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\n{3,}", "\n\n");
+        return text.Trim();
     }
 }
