@@ -1,5 +1,6 @@
 using BookManagementService.Services;
 using BookManagementService.Data;
+using BookManagementService.Repositories;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +15,9 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
     ?? "Host=localhost;Database=bookdb;Username=postgres;Password=postgres";
 builder.Services.AddDbContext<BookDbContext>(options =>
     options.UseNpgsql(connectionString));
+
+// Repository
+builder.Services.AddScoped<IBookRepository, BookRepository>();
 
 // CLIP Service (ONNX)
 builder.Services.AddSingleton<IClipService, ClipService>();
