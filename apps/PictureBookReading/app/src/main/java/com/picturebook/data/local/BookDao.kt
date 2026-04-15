@@ -19,6 +19,9 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE isPlaceholder = 0")
     suspend fun getAllRealBooks(): List<BookEntity>
 
+    @Query("SELECT * FROM books WHERE isPlaceholder = 1")
+    suspend fun getAllPlaceholders(): List<BookEntity>
+
     @Query("SELECT COUNT(*) FROM books WHERE isPlaceholder = 0")
     suspend fun getBookCount(): Int
 

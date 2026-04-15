@@ -32,6 +32,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.picturebook.hardware.AudioService
 import com.picturebook.infrastructure.ai.BookMatchingClient
 import com.picturebook.infrastructure.ai.BookRepository
+import com.picturebook.infrastructure.ai.BookSearchResult
 import com.picturebook.presentation.ui.theme.ReadingColor
 import kotlinx.coroutines.*
 
@@ -360,23 +361,19 @@ private fun doCaptureAndRead(
                 val bitmap = image.toBitmap()
                 image.close()
                 scope.launch(Dispatchers.IO) {
-                    val matchResult = bookRepository.searchBook(bitmap)
+                    val result = bookRepository.searchBook(bitmap)
                     withContext(Dispatchers.Main) {
-                        if (matchResult != null) {
-                            val bookDetails = bookRepository.getBookDetails(matchResult.bookId)
-                            if (bookDetails != null && bookDetails.pages.isNotEmpty()) {
-                                val currentPage = bookDetails.pages.find { it.pageNumber == matchResult.pageNumber }
-                                    ?: bookDetails.pages.firstOrNull()
-                                if (currentPage != null && currentPage.fullText.isNotBlank()) {
-                                    onTextRecognized(currentPage.fullText)
+                        when (result) {
+                            is BookSearchResult.Found -> {
+                                if (result.text.isNotBlank()) {
+                                    onTextRecognized(result.text)
                                 } else {
-                                    onBookFound(matchResult.title)
+                                    onBookFound(result.match.title)
                                 }
-                            } else {
-                                onBookFound(matchResult.title)
                             }
-                        } else {
-                            onError()
+                            is BookSearchResult.NoOcrText, is BookSearchResult.NotFound -> {
+                                onError()
+                            }
                         }
                     }
                 }
@@ -432,12 +429,11 @@ private fun captureAndRecognize(
                             val bitmap = image.toBitmap()
                             image.close()
                             scope.launch(Dispatchers.IO) {
-                                val matchResult = bookRepository.searchBook(bitmap)
+                                val result = bookRepository.searchBook(bitmap)
                                 withContext(Dispatchers.Main) {
-                                    if (matchResult != null) {
-                                        onImageMatchSuccess(matchResult.title)
-                                    } else {
-                                        onImageMatchFailed()
+                                    when (result) {
+                                        is BookSearchResult.Found -> onImageMatchSuccess(result.match.title)
+                                        else -> onImageMatchFailed()
                                     }
                                 }
                             }
