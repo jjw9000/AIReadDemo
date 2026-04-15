@@ -1,0 +1,26 @@
+# PaddleOCR-VL-1.5 Service Dependencies
+# Python >= 3.9 required
+
+# PyTorch (CPU or GPU)
+# CPU only:
+torch>=2.0.0
+# GPU (CUDA 12.1):
+# torch>=2.0.0
+# --index-url https://download.pytorch.org/whl/cu121
+
+# Transformers for PaddleOCR-VL-1.5
+transformers>=5.0.0
+accelerate
+
+# FastAPI and server
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+
+# Image processing
+Pillow>=10.0.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+
+# HTTP client
+httpx>=0.24.0

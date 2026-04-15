@@ -18,3 +18,8 @@ build/
 # Temporary files
 *.log
 *.tmp
+
+# ML Model files
+*.safetensors
+model/
+models/
