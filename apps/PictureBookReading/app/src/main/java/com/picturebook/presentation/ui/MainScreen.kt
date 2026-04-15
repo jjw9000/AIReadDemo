@@ -47,7 +47,7 @@ fun MainScreen() {
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
 
     val audioService = remember { AudioService(context) }
-    val mlKitOcrClient = remember { HttpOcrClient() }
+    val httpOcrClient = remember { HttpOcrClient() }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -72,7 +72,6 @@ fun MainScreen() {
     DisposableEffect(Unit) {
         onDispose {
             audioService.release()
-            mlKitOcrClient.close()
         }
     }
 
@@ -210,7 +209,7 @@ fun MainScreen() {
                             statusText = "正在识别页面文字..."
                             captureAndRead(
                                 context, lifecycleOwner, previewView,
-                                mlKitOcrClient, audioService, scope,
+                                httpOcrClient, audioService, scope,
                                 onTextRecognized = { text ->
                                     isReading = false
                                     statusText = "朗读中..."
@@ -242,7 +241,7 @@ fun MainScreen() {
                             statusText = "正在识别绘本..."
                             captureAndRecognize(
                                 context, lifecycleOwner, previewView,
-                                mlKitOcrClient, scope,
+                                httpOcrClient, scope,
                                 onBookRecognized = { name ->
                                     isReading = false
                                     bookName = name
@@ -308,7 +307,7 @@ private fun captureAndRead(
     context: android.content.Context,
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView?,
-    mlKitOcrClient: HttpOcrClient,
+    httpOcrClient: HttpOcrClient,
     audioService: AudioService,
     scope: CoroutineScope,
     onTextRecognized: (String) -> Unit,
@@ -319,11 +318,11 @@ private fun captureAndRead(
     if (imageCapture == null) {
         bindCamera(context, lifecycleOwner, previewView) { cap ->
             imageCapture = cap
-            doCaptureAndRead(context, cap, mlKitOcrClient, audioService, scope, onTextRecognized, onError)
+            doCaptureAndRead(context, cap, httpOcrClient, audioService, scope, onTextRecognized, onError)
         }
     } else {
         imageCapture?.let {
-            doCaptureAndRead(context, it, mlKitOcrClient, audioService, scope, onTextRecognized, onError)
+            doCaptureAndRead(context, it, httpOcrClient, audioService, scope, onTextRecognized, onError)
         }
     }
 }
@@ -331,7 +330,7 @@ private fun captureAndRead(
 private fun doCaptureAndRead(
     context: android.content.Context,
     imageCapture: ImageCapture,
-    mlKitOcrClient: HttpOcrClient,
+    httpOcrClient: HttpOcrClient,
     audioService: AudioService,
     scope: CoroutineScope,
     onTextRecognized: (String) -> Unit,
@@ -344,7 +343,7 @@ private fun doCaptureAndRead(
                 val bitmap = image.toBitmap()
                 image.close()
                 scope.launch(Dispatchers.IO) {
-                    val result = mlKitOcrClient.recognize(bitmap)
+                    val result = httpOcrClient.recognize(bitmap)
                     withContext(Dispatchers.Main) {
                         if (result != null && result.fullText.isNotBlank()) {
                             onTextRecognized(result.fullText)
@@ -366,7 +365,7 @@ private fun captureAndRecognize(
     context: android.content.Context,
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView?,
-    mlKitOcrClient: HttpOcrClient,
+    httpOcrClient: HttpOcrClient,
     scope: CoroutineScope,
     onBookRecognized: (String) -> Unit,
     onError: () -> Unit
@@ -403,7 +402,7 @@ private fun captureAndRecognize(
                             val bitmap = image.toBitmap()
                             image.close()
                             scope.launch(Dispatchers.IO) {
-                                val result = mlKitOcrClient.recognize(bitmap)
+                                val result = httpOcrClient.recognize(bitmap)
                                 withContext(Dispatchers.Main) {
                                     if (result != null && result.fullText.isNotBlank()) {
                                         onBookRecognized(result.fullText)
