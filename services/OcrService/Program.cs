@@ -9,7 +9,7 @@ builder.Services.AddOpenApi();
 
 // Register OCR service
 builder.Services.AddHttpClient("OcrService");
-builder.Services.AddScoped<IOcrService, LocalOcrService>();
+builder.Services.AddScoped<IOcrService, PaddleOcrService>();
 
 // CORS
 builder.Services.AddCors(options =>
