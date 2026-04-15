@@ -1,0 +1,8 @@
+# ONNX model files (large)
+*.onnx
+models/
+
+# Python
+__pycache__/
+*.pyc
+venv/

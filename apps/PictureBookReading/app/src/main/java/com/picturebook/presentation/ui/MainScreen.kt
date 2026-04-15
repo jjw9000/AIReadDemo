@@ -31,6 +31,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.picturebook.hardware.AudioService
 import com.picturebook.infrastructure.ai.HttpOcrClient
+import com.picturebook.infrastructure.ai.BookMatchingClient
 import com.picturebook.presentation.ui.theme.ReadingColor
 import kotlinx.coroutines.*
 
@@ -48,6 +49,7 @@ fun MainScreen() {
 
     val audioService = remember { AudioService(context) }
     val httpOcrClient = remember { HttpOcrClient() }
+    val bookMatchingClient = remember { BookMatchingClient() }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -241,11 +243,20 @@ fun MainScreen() {
                             statusText = "正在识别绘本..."
                             captureAndRecognize(
                                 context, lifecycleOwner, previewView,
-                                httpOcrClient, scope,
+                                httpOcrClient, bookMatchingClient, scope,
                                 onBookRecognized = { name ->
                                     isReading = false
                                     bookName = name
                                     statusText = "识别成功"
+                                },
+                                onImageMatchSuccess = { name ->
+                                    isReading = false
+                                    bookName = name
+                                    statusText = "图像识别成功"
+                                },
+                                onImageMatchFailed = {
+                                    isReading = false
+                                    statusText = "未识别到绘本，请尝试调整角度"
                                 },
                                 onError = {
                                     isReading = false
@@ -366,8 +377,11 @@ private fun captureAndRecognize(
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView?,
     httpOcrClient: HttpOcrClient,
+    bookMatchingClient: BookMatchingClient,
     scope: CoroutineScope,
     onBookRecognized: (String) -> Unit,
+    onImageMatchSuccess: (String) -> Unit,
+    onImageMatchFailed: () -> Unit,
     onError: () -> Unit
 ) {
     val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -402,14 +416,27 @@ private fun captureAndRecognize(
                             val bitmap = image.toBitmap()
                             image.close()
                             scope.launch(Dispatchers.IO) {
-                                val result = httpOcrClient.recognize(bitmap)
+                                val matchResult = bookMatchingClient.matchBook(bitmap)
+                                if (matchResult != null && matchResult.similarity > 0.85f) {
+                                    onImageMatchSuccess(matchResult.title)
+                                } else {
+                                    onImageMatchFailed()
+                                }
+
+                                /*val result = httpOcrClient.recognize(bitmap)
                                 withContext(Dispatchers.Main) {
                                     if (result != null && result.fullText.isNotBlank()) {
                                         onBookRecognized(result.fullText)
                                     } else {
-                                        onError()
+                                        // OCR failed, try image matching for picture books
+                                        val matchResult = bookMatchingClient.matchBook(bitmap)
+                                        if (matchResult != null && matchResult.similarity > 0.85f) {
+                                            onImageMatchSuccess(matchResult.title)
+                                        } else {
+                                            onImageMatchFailed()
+                                        }
                                     }
-                                }
+                                }*/
                             }
                         }
                         override fun onError(exception: ImageCaptureException) {
