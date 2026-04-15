@@ -33,6 +33,8 @@ import com.picturebook.hardware.AudioService
 import com.picturebook.infrastructure.ai.BookMatchingClient
 import com.picturebook.infrastructure.ai.BookRepository
 import com.picturebook.infrastructure.ai.BookSearchResult
+import com.picturebook.infrastructure.ai.ReadResult
+import com.picturebook.domain.model.BookMatchResult
 import com.picturebook.presentation.ui.theme.ReadingColor
 import kotlinx.coroutines.*
 
@@ -47,6 +49,7 @@ fun MainScreen() {
     var isReading by remember { mutableStateOf(false) }
     var hasPermission by remember { mutableStateOf(false) }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
+    var currentBook by remember { mutableStateOf<BookMatchResult?>(null) }
 
     val audioService = remember { AudioService(context) }
     val bookRepository = remember { BookRepository(context) }
@@ -208,28 +211,51 @@ fun MainScreen() {
                     onClick = {
                         if (!isReading) {
                             isReading = true
-                            statusText = "正在识别页面文字..."
-                            captureAndRead(
-                                context, lifecycleOwner, previewView,
-                                bookRepository, audioService, scope,
-                                onTextRecognized = { text ->
-                                    isReading = false
-                                    statusText = "朗读中..."
-                                    audioService.speak(text) {
+                            val book = currentBook
+                            if (book != null) {
+                                // Book already recognized - use readWithKnownBook
+                                statusText = "正在朗读..."
+                                captureAndReadWithKnownBook(
+                                    context, lifecycleOwner, previewView,
+                                    bookRepository, audioService, scope, book.bookId,
+                                    onReadReady = { text ->
                                         isReading = false
-                                        statusText = "朗读完成"
+                                        statusText = "朗读中..."
+                                        audioService.speak(text) {
+                                            isReading = false
+                                            statusText = "朗读完成"
+                                        }
+                                    },
+                                    onError = {
+                                        isReading = false
+                                        statusText = "朗读失败"
                                     }
-                                },
-                                onBookFound = { name ->
-                                    isReading = false
-                                    bookName = name
-                                    statusText = "识别成功"
-                                },
-                                onError = {
-                                    isReading = false
-                                    statusText = "未识别到文字"
-                                }
-                            )
+                                )
+                            } else {
+                                // No book recognized - do full search flow
+                                statusText = "正在识别页面文字..."
+                                captureAndRead(
+                                    context, lifecycleOwner, previewView,
+                                    bookRepository, audioService, scope,
+                                    onTextRecognized = { text ->
+                                        isReading = false
+                                        statusText = "朗读中..."
+                                        audioService.speak(text) {
+                                            isReading = false
+                                            statusText = "朗读完成"
+                                        }
+                                    },
+                                    onBookFound = { name ->
+                                        isReading = false
+                                        bookName = name
+                                        statusText = "识别成功"
+                                    },
+                                    onError = {
+                                        isReading = false
+                                        statusText = "未识别到文字"
+                                    }
+                                )
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -249,22 +275,28 @@ fun MainScreen() {
                             captureAndRecognize(
                                 context, lifecycleOwner, previewView,
                                 bookRepository, scope,
-                                onBookRecognized = { name ->
+                                onBookRecognized = { bookMatch ->
                                     isReading = false
-                                    bookName = name
+                                    currentBook = bookMatch
+                                    bookName = bookMatch.title
                                     statusText = "识别成功"
                                 },
-                                onImageMatchSuccess = { name ->
+                                onImageMatchSuccess = { bookMatch ->
                                     isReading = false
-                                    bookName = name
+                                    currentBook = bookMatch
+                                    bookName = bookMatch.title
                                     statusText = "图像识别成功"
                                 },
                                 onImageMatchFailed = {
                                     isReading = false
+                                    currentBook = null
+                                    bookName = null
                                     statusText = "未识别到绘本，请尝试调整角度"
                                 },
                                 onError = {
                                     isReading = false
+                                    currentBook = null
+                                    bookName = null
                                     statusText = "识别失败，请重试"
                                 }
                             )
@@ -330,14 +362,17 @@ private fun captureAndRead(
     onBookFound: (String) -> Unit,
     onError: () -> Unit
 ) {
+    Log.d("MainScreen", "captureAndRead: previewView=${previewView != null}")
     var imageCapture: ImageCapture? = null
 
     if (imageCapture == null) {
         bindCamera(context, lifecycleOwner, previewView) { cap ->
+            Log.d("MainScreen", "Camera bound, calling doCaptureAndRead")
             imageCapture = cap
             doCaptureAndRead(context, cap, bookRepository, audioService, scope, onTextRecognized, onBookFound, onError)
         }
     } else {
+        Log.d("MainScreen", "Using existing imageCapture")
         imageCapture?.let {
             doCaptureAndRead(context, it, bookRepository, audioService, scope, onTextRecognized, onBookFound, onError)
         }
@@ -358,23 +393,33 @@ private fun doCaptureAndRead(
         ContextCompat.getMainExecutor(context),
         object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(image: ImageProxy) {
+                Log.d("MainScreen", "onCaptureSuccess: image=${image.width}x${image.height}")
                 val bitmap = image.toBitmap()
+                Log.d("MainScreen", "onCaptureSuccess: bitmap=${bitmap?.width}x${bitmap?.height}")
                 image.close()
                 scope.launch(Dispatchers.IO) {
-                    val result = bookRepository.searchBook(bitmap)
-                    withContext(Dispatchers.Main) {
-                        when (result) {
-                            is BookSearchResult.Found -> {
-                                if (result.text.isNotBlank()) {
-                                    onTextRecognized(result.text)
-                                } else {
-                                    onBookFound(result.match.title)
+                    Log.d("MainScreen", "Calling searchBook...")
+                    try {
+                        val result = bookRepository.searchBook(bitmap)
+                        Log.d("MainScreen", "searchBook result: $result")
+                        withContext(Dispatchers.Main) {
+                            when (result) {
+                                is BookSearchResult.Found -> {
+                                    if (result.text.isNotBlank()) {
+                                        onTextRecognized(result.text)
+                                    } else {
+                                        onBookFound(result.match.title)
+                                    }
+                                }
+                                is BookSearchResult.NoOcrText, is BookSearchResult.NotFound -> {
+                                    Log.d("MainScreen", "No match found")
+                                    onError()
                                 }
                             }
-                            is BookSearchResult.NoOcrText, is BookSearchResult.NotFound -> {
-                                onError()
-                            }
                         }
+                    } catch (e: Exception) {
+                        Log.e("MainScreen", "searchBook failed: ${e.message}", e)
+                        withContext(Dispatchers.Main) { onError() }
                     }
                 }
             }
@@ -392,8 +437,8 @@ private fun captureAndRecognize(
     previewView: PreviewView?,
     bookRepository: BookRepository,
     scope: CoroutineScope,
-    onBookRecognized: (String) -> Unit,
-    onImageMatchSuccess: (String) -> Unit,
+    onBookRecognized: (BookMatchResult) -> Unit,
+    onImageMatchSuccess: (BookMatchResult) -> Unit,
     onImageMatchFailed: () -> Unit,
     onError: () -> Unit
 ) {
@@ -432,8 +477,79 @@ private fun captureAndRecognize(
                                 val result = bookRepository.searchBook(bitmap)
                                 withContext(Dispatchers.Main) {
                                     when (result) {
-                                        is BookSearchResult.Found -> onImageMatchSuccess(result.match.title)
+                                        is BookSearchResult.Found -> onImageMatchSuccess(result.match)
                                         else -> onImageMatchFailed()
+                                    }
+                                }
+                            }
+                        }
+                        override fun onError(exception: ImageCaptureException) {
+                            Log.e("MainScreen", "Capture failed: ${exception.message}")
+                            scope.launch(Dispatchers.Main) { onError() }
+                        }
+                    }
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("MainScreen", "Camera bind failed: ${e.message}")
+            scope.launch(Dispatchers.Main) { onError() }
+        }
+    }, ContextCompat.getMainExecutor(context))
+}
+
+// Capture and read using a known book (no cover match needed)
+private fun captureAndReadWithKnownBook(
+    context: android.content.Context,
+    lifecycleOwner: LifecycleOwner,
+    previewView: PreviewView?,
+    bookRepository: BookRepository,
+    audioService: AudioService,
+    scope: CoroutineScope,
+    bookId: String,
+    onReadReady: (String) -> Unit,
+    onError: () -> Unit
+) {
+    val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+    cameraProviderFuture.addListener({
+        try {
+            val cameraProvider = cameraProviderFuture.get()
+            cameraProvider.unbindAll()
+
+            val preview = Preview.Builder().build()
+            previewView?.let { pv ->
+                preview.setSurfaceProvider(pv.surfaceProvider)
+            }
+
+            val imageCapture = ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                .build()
+
+            cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                CameraSelector.DEFAULT_BACK_CAMERA,
+                preview,
+                imageCapture
+            )
+
+            // Give camera time to focus, then capture
+            scope.launch(Dispatchers.Main) {
+                delay(1000)
+                imageCapture.takePicture(
+                    ContextCompat.getMainExecutor(context),
+                    object : ImageCapture.OnImageCapturedCallback() {
+                        override fun onCaptureSuccess(image: ImageProxy) {
+                            val bitmap = image.toBitmap()
+                            image.close()
+                            scope.launch(Dispatchers.IO) {
+                                Log.d("MainScreen", "Calling readWithKnownBook for bookId=$bookId")
+                                val result = bookRepository.readWithKnownBook(bitmap, bookId)
+                                withContext(Dispatchers.Main) {
+                                    if (result != null && result.text.isNotBlank()) {
+                                        Log.d("MainScreen", "readWithKnownBook result: page=${result.matchedPageNumber}, usedStoredText=${result.usedStoredText}")
+                                        onReadReady(result.text)
+                                    } else {
+                                        Log.d("MainScreen", "readWithKnownBook returned null or empty")
+                                        onError()
                                     }
                                 }
                             }

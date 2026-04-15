@@ -146,6 +146,9 @@ public class BookRepository : IBookRepository
         var conn = (NpgsqlConnection)_context.Database.GetDbConnection();
         if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
 
+        // Ensure full_text column exists (migration)
+        await EnsureFullTextColumnAsync(conn);
+
         var pageId = Guid.NewGuid();
         await using var cmd = new NpgsqlCommand();
         cmd.Connection = conn;
@@ -163,5 +166,112 @@ public class BookRepository : IBookRepository
 
         await cmd.ExecuteNonQueryAsync();
         return pageId;
+    }
+
+    public async Task<List<PageMatchResultDto>> GetBookPagesAsync(Guid bookId)
+    {
+        var conn = (NpgsqlConnection)_context.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
+
+        // Ensure full_text column exists (migration)
+        await EnsureFullTextColumnAsync(conn);
+
+        await using var cmd = new NpgsqlCommand();
+        cmd.Connection = conn;
+        cmd.CommandText = @"
+            SELECT page_number,
+                   COALESCE(full_text, '') as full_text,
+                   has_text
+            FROM pages
+            WHERE book_id = @bookId
+            ORDER BY page_number";
+        cmd.Parameters.AddWithValue("@bookId", bookId);
+
+        var results = new List<PageMatchResultDto>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            results.Add(new PageMatchResultDto
+            {
+                PageNumber = reader.GetInt32(0),
+                FullText = reader.GetString(1)
+            });
+        }
+        return results;
+    }
+
+    public async Task<List<BookMatchResult>> SearchBooksByTextAsync(string searchText, float minSimilarity = 0.3f)
+    {
+        if (string.IsNullOrWhiteSpace(searchText))
+            return new List<BookMatchResult>();
+
+        var conn = (NpgsqlConnection)_context.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
+
+        // Ensure full_text column exists
+        await EnsureFullTextColumnAsync(conn);
+
+        // Search pages by full_text using ILIKE for fuzzy matching
+        // Split search text into tokens for better matching
+        var tokens = searchText.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(t => t.Length >= 2)
+            .ToArray();
+
+        if (tokens.Length == 0)
+            return new List<BookMatchResult>();
+
+        // Build search pattern - each token must appear somewhere in the text
+        var patterns = tokens.Select(t => $"%{t}%").ToArray();
+        var whereClause = string.Join(" AND ", patterns.Select((_, i) => $"full_text ILIKE @p{i}"));
+
+        await using var cmd = new NpgsqlCommand();
+        cmd.Connection = conn;
+        cmd.CommandText = $@"
+            SELECT DISTINCT b.id, b.title,
+                   COALESCE(full_text, '') as page_text,
+                   1.0 as similarity
+            FROM books b
+            JOIN pages p ON b.id = p.book_id
+            WHERE {whereClause}
+            LIMIT 10";
+
+        for (int i = 0; i < patterns.Length; i++)
+        {
+            cmd.Parameters.AddWithValue($"@p{i}", patterns[i]);
+        }
+
+        var results = new List<BookMatchResult>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            results.Add(new BookMatchResult
+            {
+                Id = reader.GetGuid(0),
+                Title = reader.GetString(1),
+                Similarity = (float)(double)reader["similarity"]
+            });
+        }
+        return results;
+    }
+
+    private async Task EnsureFullTextColumnAsync(NpgsqlConnection conn)
+    {
+        try
+        {
+            await using var checkCmd = new NpgsqlCommand(@"
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'pages' AND column_name = 'full_text'", conn);
+            var exists = await checkCmd.ExecuteScalarAsync();
+            if (exists == null)
+            {
+                await using var alterCmd = new NpgsqlCommand(@"
+                    ALTER TABLE pages ADD COLUMN full_text TEXT", conn);
+                await alterCmd.ExecuteNonQueryAsync();
+            }
+        }
+        catch
+        {
+            // Column might already exist, ignore
+        }
     }
 }

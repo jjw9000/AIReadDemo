@@ -11,5 +11,7 @@ public interface IBookRepository
     Task<Guid> CreateBookAsync(string title, string vectorStr, string? metadata);
     Task<List<BookMatchResult>> MatchBookCoversAsync(string vectorStr, float minSimilarity = 0.7f);
     Task<List<BookMatchResult>> MatchPagesAsync(Guid bookId, string vectorStr, float minSimilarity = 0.7f);
+    Task<List<PageMatchResultDto>> GetBookPagesAsync(Guid bookId);
+    Task<List<BookMatchResult>> SearchBooksByTextAsync(string searchText, float minSimilarity = 0.3f);
     Task<Guid> CreatePageAsync(Guid bookId, int pageNumber, string vectorStr, bool hasText);
 }

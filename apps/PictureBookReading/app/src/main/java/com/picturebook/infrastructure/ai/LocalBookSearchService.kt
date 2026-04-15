@@ -126,9 +126,9 @@ class LocalBookSearchService(
             .distinct()
     }
 
-    private fun tokenizeToSet(text: String): Set<String> = tokenize(text).toSet()
+    fun tokenizeToSet(text: String): Set<String> = tokenize(text).toSet()
 
-    private fun calculateJaccardSimilarity(set1: Set<String>, set2: Set<String>): Float {
+    fun calculateJaccardSimilarity(set1: Set<String>, set2: Set<String>): Float {
         if (set1.isEmpty() && set2.isEmpty()) return 0f
         val intersection = set1.intersect(set2).size
         val union = set1.union(set2).size

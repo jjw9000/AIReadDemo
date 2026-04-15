@@ -21,53 +21,58 @@ class BookRepository(context: Context) {
     private val httpOcrClient = HttpOcrClient()
 
     suspend fun searchBook(bitmap: Bitmap, extractedText: String? = null): BookSearchResult = withContext(Dispatchers.IO) {
-        // Use provided OCR text or extract new one
-        val ocrText = extractedText ?: run {
-            ocrClient.recognize(bitmap)?.fullText ?: return@withContext BookSearchResult.NoOcrText
+        Log.d(TAG, "searchBook called, bitmap=${bitmap.width}x${bitmap.height}")
+
+        // Try local search with ML OCR first
+        var ocrText = extractedText
+        if (ocrText == null) {
+            Log.d(TAG, "No extractedText, calling ML Kit OCR...")
+            ocrText = ocrClient.recognize(bitmap)?.fullText
         }
 
-        Log.d(TAG, "OCR text: $ocrText")
+        // Try local search with OCR text
+        if (!ocrText.isNullOrBlank()) {
+            Log.d(TAG, "OCR text: $ocrText")
+            val localResult = localSearchService.search(ocrText)
+            if (localResult != null) {
+                Log.d(TAG, "Local match found: ${localResult.bookId}, isPlaceholder=${localResult.isPlaceholder}, similarity: ${localResult.similarity}")
 
-        // Try local search first
-        val localResult = localSearchService.search(ocrText)
-        if (localResult != null) {
-            Log.d(TAG, "Local match found: ${localResult.bookId}, isPlaceholder=${localResult.isPlaceholder}, similarity: ${localResult.similarity}")
-
-            if (localResult.isPlaceholder) {
-                // Fill in placeholder with OCR text
-                val title = if (localResult.title.isNotBlank()) localResult.title else ocrText.take(20)
-                val pageText = ocrText
-                fillPlaceholder(localResult.bookId, title, pageText)
-                return@withContext BookSearchResult.Found(
-                    BookMatchResult(
-                        bookId = localResult.bookId,
-                        title = title,
-                        pageNumber = 1,
-                        similarity = localResult.similarity,
-                        isLocal = true
-                    ),
-                    text = pageText
-                )
-            } else {
-                // Real book found - get page text
-                val pages = bookDao.getPagesByBookId(localResult.bookId)
-                val matchedPage = pages.find { it.pageNumber == localResult.pageNumber } ?: pages.firstOrNull()
-                val pageText = matchedPage?.fullText ?: ""
-                return@withContext BookSearchResult.Found(
-                    BookMatchResult(
-                        bookId = localResult.bookId,
-                        title = localResult.title,
-                        pageNumber = matchedPage?.pageNumber ?: 0,
-                        similarity = localResult.similarity,
-                        isLocal = true
-                    ),
-                    text = pageText
-                )
+                if (localResult.isPlaceholder) {
+                    // Fill in placeholder with OCR text
+                    val title = if (localResult.title.isNotBlank()) localResult.title else ocrText.take(20)
+                    val pageText = ocrText
+                    fillPlaceholder(localResult.bookId, title, pageText)
+                    return@withContext BookSearchResult.Found(
+                        BookMatchResult(
+                            bookId = localResult.bookId,
+                            title = title,
+                            pageNumber = 1,
+                            similarity = localResult.similarity,
+                            isLocal = true
+                        ),
+                        text = pageText
+                    )
+                } else {
+                    // Real book found - get page text
+                    val pages = bookDao.getPagesByBookId(localResult.bookId)
+                    val matchedPage = pages.find { it.pageNumber == localResult.pageNumber } ?: pages.firstOrNull()
+                    val pageText = matchedPage?.fullText ?: ""
+                    return@withContext BookSearchResult.Found(
+                        BookMatchResult(
+                            bookId = localResult.bookId,
+                            title = localResult.title,
+                            pageNumber = matchedPage?.pageNumber ?: 0,
+                            similarity = localResult.similarity,
+                            isLocal = true
+                        ),
+                        text = pageText
+                    )
+                }
             }
         }
 
-        // Fallback to BookManagementService (CLIP)
-        Log.d(TAG, "No local match, calling CLIP API")
+        // Fallback to BookManagementService (CLIP) - for cover/image matching
+        Log.d(TAG, "No local match or no OCR text, calling CLIP API")
         val serverResult = bookApi.matchBook(bitmap)
         if (serverResult != null && serverResult.pages.isNotEmpty()) {
             Log.d(TAG, "CLIP match: ${serverResult.id}, ${serverResult.title}, ${serverResult.pages.size} pages")
@@ -85,25 +90,27 @@ class BookRepository(context: Context) {
             )
         }
 
-        // CLIP found nothing - use OcrService API
-        Log.d(TAG, "CLIP found nothing, calling OcrService API")
-        val ocrServiceResult = httpOcrClient.recognize(bitmap)
-        if (ocrServiceResult != null && ocrServiceResult.fullText.isNotBlank()) {
-            Log.d(TAG, "OcrService returned: ${ocrServiceResult.fullText}")
-            // Save as new book
-            val bookId = "ocr_${System.currentTimeMillis()}"
-            val title = ocrServiceResult.fullText.take(20)
-            cacheOcrResult(bookId, title, ocrServiceResult.fullText)
-            return@withContext BookSearchResult.Found(
-                BookMatchResult(
-                    bookId = bookId,
-                    title = title,
-                    pageNumber = 1,
-                    similarity = 1.0f,
-                    isLocal = false
-                ),
-                text = ocrServiceResult.fullText
-            )
+        // CLIP found nothing - try OcrService API as last resort
+        if (ocrText.isNullOrBlank()) {
+            Log.d(TAG, "CLIP found nothing and no local OCR, calling OcrService API")
+            val ocrServiceResult = httpOcrClient.recognize(bitmap)
+            if (ocrServiceResult != null && ocrServiceResult.fullText.isNotBlank()) {
+                Log.d(TAG, "OcrService returned: ${ocrServiceResult.fullText}")
+                // Save as new book
+                val bookId = "ocr_${System.currentTimeMillis()}"
+                val title = ocrServiceResult.fullText.take(20)
+                cacheOcrResult(bookId, title, ocrServiceResult.fullText)
+                return@withContext BookSearchResult.Found(
+                    BookMatchResult(
+                        bookId = bookId,
+                        title = title,
+                        pageNumber = 1,
+                        similarity = 1.0f,
+                        isLocal = false
+                    ),
+                    text = ocrServiceResult.fullText
+                )
+            }
         }
 
         return@withContext BookSearchResult.NotFound
@@ -119,6 +126,67 @@ class BookRepository(context: Context) {
             title = book.title,
             pages = pages.map { PageDetails(pageNumber = it.pageNumber, fullText = it.fullText) }
         )
+    }
+
+    /**
+     * Read a page from a known book without doing cover match.
+     * 1. ML OCR the bitmap to get current page text
+     * 2. If ML OCR finds nothing, fall back to OcrService API
+     * 3. Match against the book's pages
+     * 4. If matched page has stored text, use it; otherwise use OCR result
+     */
+    suspend fun readWithKnownBook(bitmap: Bitmap, bookId: String): ReadResult? = withContext(Dispatchers.IO) {
+        Log.d(TAG, "readWithKnownBook called, bookId=$bookId")
+
+        // ML OCR the current page
+        var ocrText = ocrClient.recognize(bitmap)?.fullText
+        if (ocrText == null) {
+            Log.d(TAG, "ML Kit OCR returned null, falling back to OcrService API")
+            ocrText = httpOcrClient.recognize(bitmap)?.fullText
+        }
+
+        if (ocrText.isNullOrBlank()) {
+            Log.d(TAG, "All OCR methods failed for known book")
+            return@withContext null
+        }
+        Log.d(TAG, "readWithKnownBook OCR text: $ocrText")
+
+        // Get pages for this book
+        val pages = bookDao.getPagesByBookId(bookId)
+        if (pages.isEmpty()) {
+            Log.d(TAG, "No pages found for book $bookId, using OCR text directly")
+            return@withContext ReadResult(text = ocrText, matchedPageNumber = 0, usedStoredText = false)
+        }
+
+        // Match OCR text to pages using Jaccard
+        val ocrTokens = localSearchService.tokenizeToSet(ocrText)
+        val scored = pages.mapNotNull { page ->
+            if (page.fullText.isBlank()) {
+                null
+            } else {
+                val pageTokens = localSearchService.tokenizeToSet(page.fullText)
+                val similarity = localSearchService.calculateJaccardSimilarity(ocrTokens, pageTokens)
+                if (similarity > 0) {
+                    page to similarity
+                } else {
+                    null
+                }
+            }
+        }.sortedByDescending { it.second }
+
+        val bestMatch = scored.firstOrNull()
+        return@withContext if (bestMatch != null && bestMatch.second >= 0.3f) {
+            val (matchedPage, similarity) = bestMatch
+            Log.d(TAG, "Matched page ${matchedPage.pageNumber} with similarity $similarity, stored text: ${matchedPage.fullText.take(50)}")
+            ReadResult(
+                text = matchedPage.fullText,
+                matchedPageNumber = matchedPage.pageNumber,
+                usedStoredText = true
+            )
+        } else {
+            Log.d(TAG, "No page match or low similarity, using OCR text directly")
+            ReadResult(text = ocrText, matchedPageNumber = 0, usedStoredText = false)
+        }
     }
 
     private suspend fun fillPlaceholder(bookId: String, title: String, pageText: String) {
@@ -201,3 +269,10 @@ sealed class BookSearchResult {
     data object NoOcrText : BookSearchResult()
     data object NotFound : BookSearchResult()
 }
+
+// For reading with a known book (no cover match needed)
+data class ReadResult(
+    val text: String,
+    val matchedPageNumber: Int,
+    val usedStoredText: Boolean
+)
