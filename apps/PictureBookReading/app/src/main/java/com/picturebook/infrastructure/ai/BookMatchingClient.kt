@@ -79,7 +79,8 @@ class BookMatchingClient(
     data class MatchResponse(
         val success: Boolean,
         val book: BookDto?,
-        val error: String?
+        val error: String?,
+        val books: List<BookDto>? // for backward compatibility
     )
 
     companion object {

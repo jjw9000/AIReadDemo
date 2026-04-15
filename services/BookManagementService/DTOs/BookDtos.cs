@@ -53,12 +53,19 @@ public class BookMatchResult
     public string Title { get; set; } = string.Empty;
     public float Similarity { get; set; }
     public Dictionary<string, object>? Metadata { get; set; }
+    public List<PageMatchResultDto> Pages { get; set; } = new();
+}
+
+public class PageMatchResultDto
+{
+    public int PageNumber { get; set; }
+    public string FullText { get; set; } = string.Empty;
 }
 
 public class MatchResponse
 {
     public bool Success { get; set; }
-    public List<BookMatchResult> Books { get; set; } = new();
+    public BookMatchResult? Book { get; set; }
     public string? Error { get; set; }
 }
 

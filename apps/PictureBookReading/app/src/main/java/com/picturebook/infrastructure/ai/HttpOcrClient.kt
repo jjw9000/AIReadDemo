@@ -21,6 +21,7 @@ class HttpOcrClient(private val apiBaseUrl: String = "http://192.168.3.18:5017")
             )
             val json = gson.toJson(requestBody)
 
+            Log.d(TAG, "Calling OcrService API at $apiBaseUrl/ocr/recognize-simple")
             // Use URLConnection for simplicity - in production use OkHttp or Ktor
             val url = java.net.URL("$apiBaseUrl/ocr/recognize-simple")
             val connection = url.openConnection() as java.net.HttpURLConnection
@@ -55,6 +56,7 @@ class HttpOcrClient(private val apiBaseUrl: String = "http://192.168.3.18:5017")
                     )
                     cont.resume(result)
                 } else {
+                    Log.d(TAG, "OcrService returned empty or failed: success=${simpleResponse?.success}, text=${simpleResponse?.text}")
                     cont.resume(null)
                 }
             } else {
@@ -62,7 +64,7 @@ class HttpOcrClient(private val apiBaseUrl: String = "http://192.168.3.18:5017")
                 cont.resume(null)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "OCR failed: ${e.message}")
+            Log.e(TAG, "OCR failed: ${e.message}", e)
             cont.resume(null)
         }
     }
