@@ -20,6 +20,31 @@ public class BookRepository : IBookRepository
         return await _context.Books.FindAsync(id);
     }
 
+    public async Task<BookDetailResponse?> GetBookDetailAsync(Guid id)
+    {
+        var conn = (NpgsqlConnection)_context.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
+
+        await using var cmd = new NpgsqlCommand();
+        cmd.Connection = conn;
+        cmd.CommandText = "SELECT id, title, metadata, created_at FROM books WHERE id = @id";
+        cmd.Parameters.AddWithValue("@id", id);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            return new BookDetailResponse
+            {
+                Id = reader.GetGuid(0),
+                Title = reader.GetString(1),
+                Metadata = reader.IsDBNull(2) ? null
+                    : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(reader.GetString(2)),
+                CreatedAt = reader.GetDateTime(3)
+            };
+        }
+        return null;
+    }
+
     public async Task<bool> ExistsAsync(Guid id)
     {
         return await _context.Books.AnyAsync(b => b.Id == id);

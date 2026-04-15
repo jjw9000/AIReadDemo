@@ -416,14 +416,7 @@ private fun captureAndRecognize(
                             val bitmap = image.toBitmap()
                             image.close()
                             scope.launch(Dispatchers.IO) {
-                                val matchResult = bookMatchingClient.matchBook(bitmap)
-                                        if (matchResult != null && matchResult.similarity > 0.85f) {
-                                            onImageMatchSuccess(matchResult.title)
-                                        } else {
-                                            onImageMatchFailed()
-                                        }
-                                        
-                                /*val result = httpOcrClient.recognize(bitmap)
+                                val result = httpOcrClient.recognize(bitmap)
                                 withContext(Dispatchers.Main) {
                                     if (result != null && result.fullText.isNotBlank()) {
                                         onBookRecognized(result.fullText)
@@ -436,7 +429,7 @@ private fun captureAndRecognize(
                                             onImageMatchFailed()
                                         }
                                     }
-                                }*/
+                                }
                             }
                         }
                         override fun onError(exception: ImageCaptureException) {

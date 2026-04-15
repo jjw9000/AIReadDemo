@@ -135,21 +135,13 @@ public class BooksController : ControllerBase
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<BookDetailResponse>> GetById(Guid id)
     {
-        var book = await _bookRepository.GetByIdAsync(id);
+        var book = await _bookRepository.GetBookDetailAsync(id);
 
         if (book == null)
         {
             return NotFound(new { error = "Book not found" });
         }
 
-        return Ok(new BookDetailResponse
-        {
-            Id = book.Id,
-            Title = book.Title,
-            Metadata = string.IsNullOrEmpty(book.Metadata)
-                ? null
-                : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(book.Metadata),
-            CreatedAt = book.CreatedAt
-        });
+        return Ok(book);
     }
 }
