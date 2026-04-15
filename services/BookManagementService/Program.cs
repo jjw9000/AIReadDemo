@@ -25,6 +25,9 @@ builder.Services.AddSingleton<IClipService, ClipService>();
 // Book Detection Service (OpenCV)
 builder.Services.AddSingleton<IBookDetectionService, BookDetectionService>();
 
+// HttpClient for OcrService calls
+builder.Services.AddHttpClient();
+
 // CORS
 builder.Services.AddCors(options =>
 {
