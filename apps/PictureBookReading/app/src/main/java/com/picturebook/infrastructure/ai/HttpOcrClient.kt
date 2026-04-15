@@ -8,7 +8,7 @@ import java.io.ByteArrayOutputStream
 import java.util.Base64
 import kotlin.coroutines.resume
 
-class HttpOcrClient(private val apiBaseUrl: String = "http://10.0.2.2:5007") {
+class HttpOcrClient(private val apiBaseUrl: String = "http://192.168.3.18:5017") {
 
     private val gson = Gson()
 
