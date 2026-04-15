@@ -10,6 +10,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        flatDir {
+            dirs("D:/Android/opencv/4.9/OpenCV-android-sdk/sdk/build/outputs/aar")
+        }
     }
 }
 rootProject.name = "PictureBookReading"

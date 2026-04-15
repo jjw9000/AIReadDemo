@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 import com.picturebook.data.local.entity.BookEntity
 import com.picturebook.data.local.entity.BookPageEntity
 
@@ -34,6 +35,13 @@ interface BookDao {
 
     @Query("DELETE FROM book_pages WHERE bookId = :bookId")
     suspend fun deletePagesByBookId(bookId: String)
+
+    // Get pages with ORB descriptors for image matching
+    @Query("SELECT * FROM book_pages WHERE bookId = :bookId AND orbDescriptors IS NOT NULL ORDER BY pageNumber")
+    suspend fun getPagesWithOrbDescriptors(bookId: String): List<BookPageEntity>
+
+    @Update
+    suspend fun updatePage(page: BookPageEntity)
 
     // FTS search - returns page matches with fullText for Jaccard scoring
     @Query("""
