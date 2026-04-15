@@ -15,7 +15,7 @@ class BookMatchingClient(
 ) {
     private val gson = Gson()
 
-    suspend fun matchBook(bitmap: Bitmap): MatchResult? = suspendCancellableCoroutine { cont ->
+    suspend fun matchBook(bitmap: Bitmap): BookDto? = suspendCancellableCoroutine { cont ->
         try {
             val base64 = bitmapToBase64(bitmap)
             val requestBody = mapOf("imageBase64" to base64)
@@ -41,13 +41,8 @@ class BookMatchingClient(
                 Log.i(TAG, "Book match API response: $response")
 
                 val matchResponse = gson.fromJson(response, MatchResponse::class.java)
-                if (matchResponse != null && matchResponse.success && matchResponse.books.isNotEmpty()) {
-                    val bestMatch = matchResponse.books.first()
-                    cont.resume(MatchResult(
-                        bookId = bestMatch.id,
-                        title = bestMatch.title,
-                        similarity = bestMatch.similarity
-                    ))
+                if (matchResponse != null && matchResponse.success && matchResponse.book != null) {
+                    cont.resume(matchResponse.book)
                 } else {
                     cont.resume(null)
                 }
@@ -68,23 +63,23 @@ class BookMatchingClient(
         return Base64.getEncoder().encodeToString(bytes)
     }
 
-    data class MatchResult(
-        val bookId: String,
+    data class BookDto(
+        val id: String,
         val title: String,
-        val similarity: Float
+        val pages: List<PageDto>,
+        val similarity: Float = 0f,
+        val isPlaceholder: Boolean = false
+    )
+
+    data class PageDto(
+        val pageNumber: Int,
+        val fullText: String
     )
 
     data class MatchResponse(
         val success: Boolean,
-        val books: List<BookMatch>,
+        val book: BookDto?,
         val error: String?
-    )
-
-    data class BookMatch(
-        val id: String,
-        val title: String,
-        val similarity: Float,
-        val metadata: Map<String, Any>?
     )
 
     companion object {
