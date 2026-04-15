@@ -20,8 +20,8 @@ public class PaddleOcrService : IOcrService
     {
         _httpClientFactory = httpClientFactory;
         _logger = logger;
-        _apiUrl = configuration["OcrService:ApiUrl"] ?? "https://t8r5f9e0udm8c162.aistudio-app.com/layout-parsing";
-        _token = configuration["OcrService:Token"] ?? "";
+        _apiUrl = configuration["OcrService:PaddleLayoutUrl"] ?? "https://t8r5f9e0udm8c162.aistudio-app.com/layout-parsing";
+        _token = configuration["OcrService:PaddleLayoutToken"] ?? "";
         _timeoutSeconds = configuration.GetValue("OcrService:TimeoutSeconds", 120);
     }
 
@@ -148,12 +148,21 @@ public class PaddleOcrService : IOcrService
             var sb = new StringBuilder();
             foreach (var item in items.EnumerateArray())
             {
-                if (item.TryGetProperty("markdown", out var md) &&
-                    md.TryGetProperty("text", out var textEl))
+                // Parse from prunedResult.parsing_res_list
+                if (item.TryGetProperty("prunedResult", out var prunedResult) &&
+                    prunedResult.TryGetProperty("parsing_res_list", out var parsingResList))
                 {
-                    var text = textEl.GetString();
-                    if (!string.IsNullOrWhiteSpace(text))
-                        sb.AppendLine(text);
+                    foreach (var block in parsingResList.EnumerateArray())
+                    {
+                        if (block.TryGetProperty("block_content", out var contentEl))
+                        {
+                            var text = contentEl.GetString();
+                            if (!string.IsNullOrWhiteSpace(text))
+                            {
+                                sb.AppendLine(text);
+                            }
+                        }
+                    }
                 }
             }
 
