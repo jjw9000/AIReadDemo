@@ -73,10 +73,39 @@ class HttpOcrClient(
     }
 
     private fun bitmapToBase64(bitmap: Bitmap): String {
+        // Resize to max dimension before compressing to reduce payload size
+        val resized = resizeBitmap(bitmap, MAX_IMAGE_DIMENSION)
         val outputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, outputStream)
+        resized.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, outputStream)
+        if (resized != bitmap) {
+            resized.recycle()
+        }
         val bytes = outputStream.toByteArray()
+        Log.d(TAG, "OCR image resized from ${bitmap.width}x${bitmap.height} to ${resized.width}x${resized.height}, size: ${bytes.size} bytes")
         return Base64.getEncoder().encodeToString(bytes)
+    }
+
+    /**
+     * Resize bitmap to max dimension while preserving aspect ratio.
+     * This significantly reduces payload size for OCR requests.
+     */
+    private fun resizeBitmap(bitmap: Bitmap, maxDimension: Int): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        if (width <= maxDimension && height <= maxDimension) {
+            return bitmap
+        }
+
+        val ratio = minOf(
+            maxDimension.toFloat() / width,
+            maxDimension.toFloat() / height
+        )
+
+        val newWidth = (width * ratio).toInt()
+        val newHeight = (height * ratio).toInt()
+
+        return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
     }
 
     data class OcrResult(
@@ -99,5 +128,7 @@ class HttpOcrClient(
 
     companion object {
         private const val TAG = "HttpOcrClient"
+        private const val MAX_IMAGE_DIMENSION = 1024  // Max width or height in pixels
+        private const val JPEG_QUALITY = 80          // JPEG compression quality (0-100)
     }
 }
